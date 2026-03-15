@@ -5,6 +5,8 @@ Pack : Mon Carnet de Bord Business
 
 import os
 import logging
+import json
+import urllib.request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -18,6 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN", "REMPLACE_PAR_TON_TOKEN")
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ─────────────────────────────────────────────────────────────────
 # DONNEES PAR PAYS
@@ -330,6 +333,7 @@ def kb_main():
         [InlineKeyboardButton("⚖️ Légal & Fiscal", callback_data="menu_legal"),
          InlineKeyboardButton("📖 Aide Guide", callback_data="menu_guide")],
         [InlineKeyboardButton("🔔 Rappels mensuels", callback_data="menu_rappels")],
+        [InlineKeyboardButton("🤖 Poser une question au coach", callback_data="menu_ia")],
     ])
 
 def kb_back():
@@ -419,152 +423,4 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
-    d = q.data
-
-    # Menu principal
-    if d == "menu_main":
-        await q.edit_message_text("Que veux-tu explorer ? 👇", reply_markup=kb_main())
-
-    # Comptabilité
-    elif d == "menu_compta":
-        await q.edit_message_text("📊 *Comptabilité*\n\nChoisis un sujet :",
-                                   parse_mode="Markdown", reply_markup=kb_compta())
-    elif d.startswith("compta_"):
-        key = d[7:]
-        await q.edit_message_text(COMPTA.get(key, "Sujet non trouvé."),
-                                   parse_mode="Markdown", reply_markup=kb_back())
-
-    # Prix
-    elif d == "menu_prix":
-        await q.edit_message_text("💰 *Prix & Marges*\n\nChoisis un sujet :",
-                                   parse_mode="Markdown", reply_markup=kb_prix())
-    elif d.startswith("prix_"):
-        key = d[5:]
-        await q.edit_message_text(PRIX.get(key, "Sujet non trouvé."),
-                                   parse_mode="Markdown", reply_markup=kb_back())
-
-    # Légal — sélection pays
-    elif d == "menu_legal":
-        await q.edit_message_text(
-            "⚖️ *Légal & Fiscal*\n\nSélectionne ton pays pour des informations adaptées :",
-            parse_mode="Markdown", reply_markup=kb_legal())
-
-    elif d.startswith("legal_") and not d.startswith("ld_"):
-        pays_key = d[6:]
-        p = PAYS.get(pays_key, PAYS["autre"])
-        context.user_data["pays"] = pays_key
-        await q.edit_message_text(
-            f"⚖️ *Légal & Fiscal — {p['nom']}*\n\nQue veux-tu savoir ?",
-            parse_mode="Markdown", reply_markup=kb_legal_detail(pays_key))
-
-    # Légal — détail
-    elif d.startswith("ld_"):
-        parts = d[3:].rsplit("_", 1)
-        pays_key = parts[0]
-        sujet = parts[1] if len(parts) > 1 else ""
-        p = PAYS.get(pays_key, PAYS["autre"])
-
-        if sujet == "fiscal":
-            texte = (
-                f"🪪 *Numéro fiscal — {p['nom']}*\n\n"
-                f"Dans ton pays, le numéro fiscal s'appelle :\n"
-                f"*{p['fiscal_id']}*\n\n"
-                f"Il est obligatoire pour :\n"
-                f"• Ouvrir un compte bancaire professionnel\n"
-                f"• Émettre des factures légales\n"
-                f"• Passer des marchés avec des entreprises ou l'État\n\n"
-                f"📍 Où l'obtenir : {p['impots']}\n"
-                f"🌐 Site : {p['site']}\n\n"
-                f"💡 *Coach :* Être en règle te protège et te donne accès à de meilleurs marchés."
-            )
-        elif sujet == "creation":
-            texte = (
-                f"📋 *Créer ton entreprise — {p['nom']}*\n\n"
-                f"{p['creation']}\n\n"
-                f"🏢 *Structure d'accueil :* {p['cfe']}\n"
-                f"📋 *Registre :* {p['registre']}\n\n"
-                f"💡 *Coach :* Commence par une entreprise individuelle — "
-                f"plus simple et moins coûteux. Tu évolueras quand ton business grandira."
-            )
-        elif sujet == "impots":
-            texte = (
-                f"💸 *Obligations fiscales — {p['nom']}*\n\n"
-                f"*Administration :* {p['impots']}\n\n"
-                f"*Régime recommandé pour démarrer :*\n{p['micro']}\n\n"
-                f"*Patente :* {p['patente']}\n\n"
-                f"🌐 Site officiel : {p['site']}\n\n"
-                f"⚠️ Ces informations sont générales. Consulte un comptable "
-                f"ou l'administration fiscale pour ta situation précise.\n\n"
-                f"💡 *Coach :* Être en règle dès le début t'évite de gros problèmes plus tard."
-            )
-        else:
-            texte = "Information non disponible."
-
-        await q.edit_message_text(texte, parse_mode="Markdown",
-                                   reply_markup=kb_legal_detail(pays_key))
-
-    # Guide
-    elif d == "menu_guide":
-        await q.edit_message_text("📖 *Aide — Mon Carnet de Bord Business*\n\nChoisis un sujet :",
-                                   parse_mode="Markdown", reply_markup=kb_guide())
-    elif d.startswith("guide_"):
-        key = d[6:]
-        await q.edit_message_text(GUIDE.get(key, "Sujet non trouvé."),
-                                   parse_mode="Markdown", reply_markup=kb_back())
-
-    # Rappels
-    elif d == "menu_rappels":
-        actifs = context.user_data.get("rappels_actifs", False)
-        statut = "✅ activés" if actifs else "❌ désactivés"
-        texte = (
-            f"🔔 *Rappels mensuels*\n\n"
-            f"Statut : rappels *{statut}*\n\n"
-            f"Quand actifs, tu reçois :\n"
-            f"• Le 25 du mois : rappel budget mensuel\n"
-            f"• Le 28 du mois : rappel bilan mensuel\n"
-            f"• Le 1er du mois : rappel objectifs\n\n"
-            f"Ces rappels font une grande différence sur la durée ! 💪"
-        )
-        await q.edit_message_text(texte, parse_mode="Markdown", reply_markup=kb_rappels(actifs))
-
-    elif d == "rappel_toggle":
-        actifs = not context.user_data.get("rappels_actifs", False)
-        context.user_data["rappels_actifs"] = actifs
-        if actifs:
-            msg = ("✅ *Rappels activés !*\n\n"
-                   "Tu recevras tes rappels mensuels pour ne jamais oublier "
-                   "de remplir ton guide. La régularité, c'est la clé ! 💪")
-        else:
-            msg = ("🔕 *Rappels désactivés.*\n\n"
-                   "Tu peux les réactiver à tout moment depuis ce menu.")
-        await q.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb_rappels(actifs))
-
-async def msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texte = (update.message.text or "").lower()
-    if any(m in texte for m in ["merci", "super", "bien", "parfait", "ok", "top"]):
-        rep = "😊 Avec plaisir ! Tape /menu pour accéder aux outils."
-    elif any(m in texte for m in ["prix", "tarif", "combien", "marge"]):
-        rep = "Pour les prix et marges, utilise le menu 💰 Prix & Marges !"
-    elif any(m in texte for m in ["aide", "help", "comment", "quoi"]):
-        rep = "Je suis là ! Utilise les boutons du menu pour choisir un sujet."
-    else:
-        rep = ("Je suis ton assistant business ! 🤖\n\n"
-               "Utilise les boutons ci-dessous pour accéder à mes conseils. "
-               "Tape /menu pour afficher le menu principal.")
-    await update.message.reply_text(rep, reply_markup=kb_main())
-
-# ─────────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────────
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu_cmd))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
-    logger.info("Coach Business Pro — Bot démarré !")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+    await q.a
